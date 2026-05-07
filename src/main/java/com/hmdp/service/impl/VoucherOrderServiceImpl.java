@@ -1,42 +1,26 @@
 package com.hmdp.service.impl;
 
-import cn.hutool.core.bean.BeanUtil;
-import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
-import com.rabbitmq.client.Channel;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.ibatis.javassist.bytecode.stackmap.BasicBlock;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.springframework.amqp.core.Message;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.aop.framework.AopContext;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.data.redis.connection.stream.*;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
-import java.time.Duration;
 import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * <p>
@@ -53,8 +37,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     private ISeckillVoucherService seckillVoucherService;
 
-    @Resource
-    private RabbitTemplate rabbitTemplate;
+/*    @Resource
+    private RabbitTemplate rabbitTemplate;*/
+
+    @Autowired
+    private RocketMQTemplate rocketMQTemplate;
     @Resource
     private RedisIdWorker redisIdWorker;
 
@@ -226,19 +213,19 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //        //4.返回订单id
 //        return Result.ok(orderId);
         // 2. 脱离请求线程，发消息给 RabbitMQ
+        // 2. 脱离请求线程，发送消息给 RocketMQ
         VoucherOrder order = new VoucherOrder();
         order.setId(orderId);
         order.setUserId(userId);
         order.setVoucherId(voucherId);
-        // 你可以用 JSON，也可以用序列化
-        // 增加消息发送的异常处理
-        //放入mq
-        String jsonStr = JSONUtil.toJsonStr(order);
+
+// 直接发送对象，RocketMQ Starter 会自动帮你转 JSON
         try {
-            rabbitTemplate.convertAndSend("X","XA",jsonStr );
+            rocketMQTemplate.convertAndSend("hmdp-order-topic", order);
         } catch (Exception e) {
-            log.error("发送 RabbitMQ 消息失败，订单ID: {}", orderId, e);
-            throw new RuntimeException("发送消息失败");
+            log.error("发送 RocketMQ 消息失败，订单ID：{}", orderId, e);
+            // 这里其实可以不抛异常，通过后续的补偿机制处理，但为了严谨先保留
+            throw new RuntimeException("发送订单消息失败");
         }
         // 3. 返回订单号给前端（实际下单异步处理）
         return Result.ok(orderId);
