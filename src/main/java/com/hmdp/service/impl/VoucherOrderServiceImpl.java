@@ -212,16 +212,22 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //        proxy = (IVoucherOrderService) AopContext.currentProxy();
 //        //4.返回订单id
 //        return Result.ok(orderId);
-        // 2. 脱离请求线程，发消息给 RabbitMQ
-        // 2. 脱离请求线程，发送消息给 RocketMQ
-        VoucherOrder order = new VoucherOrder();
-        order.setId(orderId);
-        order.setUserId(userId);
-        order.setVoucherId(voucherId);
-
+        // 6. 走到这里说明 r == 0，即：Redis 预扣库存成功 + 资格校验通过
+        // 封装订单对象，准备发往 RocketMQ
+        VoucherOrder voucherOrder = new VoucherOrder();
+        voucherOrder.setId(orderId);
+        voucherOrder.setUserId(userId);
+        voucherOrder.setVoucherId(voucherId);
 // 直接发送对象，RocketMQ Starter 会自动帮你转 JSON
         try {
-            rocketMQTemplate.convertAndSend("hmdp-order-topic", order);
+            // 7. 发送异步消息
+            // 参数一：Topic 名字，建议在常量类里定义
+            // 参数二：订单对象，RocketMQTemplate 会自动将其转为 JSON 字符串发送
+            rocketMQTemplate.syncSendOrderly(
+                    "seckill_order_topic",
+                    voucherOrder,
+                    String.valueOf(voucherOrder.getVoucherId()) // 这是一个“路标”
+            );
         } catch (Exception e) {
             log.error("发送 RocketMQ 消息失败，订单ID：{}", orderId, e);
             // 这里其实可以不抛异常，通过后续的补偿机制处理，但为了严谨先保留
@@ -279,6 +285,13 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Transactional
     public void createVoucherOrder(VoucherOrder voucherOrder) {
+        // 1.幂等性检查:利用主键查询
+        VoucherOrder oldOrder = getById(voucherOrder.getId());
+        if (oldOrder != null){
+            //如果订单存在,说明是重复消息,直接返回,不再落库
+            log.warn("订单已存在,忽略重复消息:{}", voucherOrder.getId());
+            return;
+        }
         //一人一单
         //查询订单
         Long userId =voucherOrder.getUserId();
