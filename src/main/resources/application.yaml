@@ -4,6 +4,8 @@
     name-server: 192.168.10.102:9876 # 换成你虚拟机的IP
     producer:
       group: hmdp-group
+      retry-times-when-send-failed: 3  # 发送失败重试次数
+      send-message-timeout: 3000      # 发送超时时间
   spring:
     application:
       name: hmdp

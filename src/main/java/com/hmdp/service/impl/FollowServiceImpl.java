@@ -12,6 +12,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.UserHolder;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
@@ -36,7 +37,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Resource
     private UserServiceImpl userService;
-    @Override
+  /*  @Override
     public Result follow(Long followUserId, Boolean isFollow) {
         //获取登录用户
         Long userId = UserHolder.getUser().getId();
@@ -63,7 +64,39 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             }
         }
         return Result.ok();
-    }
+    }*/
+  @Override
+  @Transactional // 开启事务
+  public Result follow(Long followUserId, Boolean isFollow) {
+      // 1. 获取登录用户
+      Long userId = UserHolder.getUser().getId();
+      String key = "follows:" + userId;
+
+      if (isFollow) {
+          // 2. 关注
+          Follow follow = new Follow();
+          follow.setUserId(userId);
+          follow.setFollowUserId(followUserId);
+
+          // 直接保存，不要在这里 catch
+          // 如果唯一索引触发冲突，这里会抛出 DataIntegrityViolationException
+          // 事务会自动回滚，保证 Redis 的 add 也不会执行
+          boolean isSuccess = save(follow);
+
+          if (isSuccess) {
+              stringRedisTemplate.opsForSet().add(key, followUserId.toString());
+          }
+      } else {
+          // 3. 取关
+          boolean isSuccess = remove(new QueryWrapper<Follow>()
+                  .eq("user_id", userId)
+                  .eq("follow_user_id", followUserId));
+          if (isSuccess) {
+              stringRedisTemplate.opsForSet().remove(key, followUserId.toString());
+          }
+      }
+      return Result.ok();
+  }
 
     @Override
     public Result isFollow(Long followUserId) {

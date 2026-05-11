@@ -48,8 +48,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
-    @Resource
-    private RedissonClient redissonClient;
+/*    @Resource
+    private RedissonClient redissonClient;*/
 
     /**
      * 脚本初始化
@@ -162,7 +162,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
     }*/
 
-        public void handleVoucherOrder(VoucherOrder voucherOrder) {
+        /*public void handleVoucherOrder(VoucherOrder voucherOrder) {
             //1.获取用户
             Long userId = voucherOrder.getUserId();
             //2.创建锁对象
@@ -185,7 +185,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                 //释放锁
                 lock.unlock();
             }
-        }
+        }*/
     private IVoucherOrderService proxy;
     @Override
     public Result seckillVoucher(Long voucherId) {
@@ -285,7 +285,43 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Transactional
     public void createVoucherOrder(VoucherOrder voucherOrder) {
-        // 1.幂等性检查:利用主键查询
+        // 1. 幂等检查 (针对订单 ID，防止 MQ 重复消费)
+        VoucherOrder oldOrder = getById(voucherOrder.getId());
+        if (oldOrder != null) {
+            return;
+        }
+
+        // 2. 一人一单校验 (虽然有唯一索引，保留查询可以打印更友好的日志)
+        Long userId = voucherOrder.getUserId();
+        int count = query().eq("user_id", userId).eq("voucher_id", voucherOrder.getVoucherId()).count();
+        if (count > 0) {
+            log.error("用户：{} 已经购买过优惠券：{}，重复下单请求已拦截", userId, voucherOrder.getVoucherId());
+            return;
+        }
+
+        // 3. 扣减库存 (乐观锁)
+        boolean success = seckillVoucherService
+                .update()
+                .setSql("stock = stock - 1")
+                .eq("voucher_id", voucherOrder.getVoucherId())
+                .gt("stock", 0) // 防止超卖的核心
+                .update();
+
+        if (!success) {
+            log.error("库存扣减失败，券ID：{}", voucherOrder.getVoucherId());
+            return;
+        }
+
+        // 4. 保存订单
+        try {
+            save(voucherOrder);
+        } catch (Exception e) {
+            // 万一前面的 count 没拦住（并发极高时），数据库唯一索引会在这里抛异常
+            log.error("数据库唯一索引拦截：用户 {} 重复下单", userId);
+        }
+
+
+        /*// 1.幂等性检查:利用主键查询
         VoucherOrder oldOrder = getById(voucherOrder.getId());
         if (oldOrder != null){
             //如果订单存在,说明是重复消息,直接返回,不再落库
@@ -315,6 +351,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             }
 
             save(voucherOrder);
-
+*/
     }
 }

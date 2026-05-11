@@ -75,7 +75,22 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Long userId = UserHolder.getUser().getId();
         //2.判断当前用户有没有点赞
         String key=BLOG_LIKED_KEY+id;
-        Double score = stringRedisTemplate.opsForZSet().score(key, userId.toString());
+        // 1. 直接尝试往 Redis 里加人（利用 Redis 原子性）
+// zadd 返回值：true 代表之前没有，加成功了；false 代表之前就有，没加成功
+        Boolean success = stringRedisTemplate.opsForZSet().add(key, userId.toString(), System.currentTimeMillis());
+
+        if (Boolean.TRUE.equals(success)) {
+            // 2. 加成功了，说明是第一次点赞，去数据库 +1
+            update().setSql("liked = liked + 1").eq("id", id).update();
+        } else {
+            // 3. 加失败了，说明已经点过赞了，现在是取消点赞
+            // 注意：这里需要先从 Redis 移除，移除成功后再去数据库 -1
+            Boolean removed = stringRedisTemplate.opsForZSet().remove(key, userId.toString()) > 0;
+            if (removed) {
+                update().setSql("liked = liked - 1").eq("id", id).update();
+            }
+        }
+        /*Double score = stringRedisTemplate.opsForZSet().score(key, userId.toString());
         if(score==null) {
             //3.如果未点赞，可以点赞
             //3.1.数据库点赞数+1
@@ -92,7 +107,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 //4.2.将用户从set集合中移除
                 stringRedisTemplate.opsForZSet().remove(key,userId.toString());
             }
-        }
+        }*/
         return Result.ok();
     }
 
