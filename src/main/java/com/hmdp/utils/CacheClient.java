@@ -87,7 +87,7 @@ public class CacheClient {
      */
     public <R, ID> R queryWithPassThrough(
             String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit unit) {
-
+        System.out.println(">>> [Debug] 业务逻辑已进入 CacheClient.queryWithPassThrough，正在查询 ID: " + id);
         String key = keyPrefix + id;
 
         // 1. 尝试从【一级缓存：Caffeine】获取
