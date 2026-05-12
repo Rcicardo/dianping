@@ -15,6 +15,8 @@ import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisData;
 import com.hmdp.utils.SystemConstants;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.data.geo.Distance;
 import org.springframework.data.geo.GeoResult;
@@ -46,6 +48,7 @@ import static com.hmdp.utils.RedisConstants.*;
  * @since 2021-12-22
  */
 @Service
+@Slf4j
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
 
     @Resource
@@ -53,6 +56,10 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     @Resource
     private CacheClient clientClient;
+
+    @Resource
+    private RocketMQTemplate rocketMQTemplate;
+
     @Override
     public Result queryById(Long id){
         //缓存穿透
@@ -181,7 +188,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     }*/
     /**
      * 缓存穿透
-     * @param id
+     * @param
      * @return
      */
     /*
@@ -231,14 +238,26 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Override
     @Transactional
     public Result update(Shop shop) {
-        Long id = shop.getId();
+        Long id  = shop.getId();
         if(id==null){
             return Result.fail("店铺id不能为空");
         }
-        //1.先修改数据库
         updateById(shop);
-        //2.删除缓存
-        stringRedisTemplate.delete(CACHE_SHOP_KEY+shop.getId());
+        // 2. 删除 Redis 缓存（二级缓存）
+        String key = CACHE_SHOP_KEY + id ;
+        stringRedisTemplate.delete(key);
+
+        // 3. 发送异步广播消息，清理所有 JVM 节点的本地缓存（一级缓存）
+        try {
+            // 使用 syncSend 或 convertAndSend 均可
+            // Topic 建议定义在常量类中，例如 MqConstants.SHOP_CACHE_TOPIC
+            rocketMQTemplate.convertAndSend("SHOP_CACHE_DROP_TOPIC", key);
+            log.info("已发送缓存失效广播，Key: {}", key);
+        } catch (Exception e) {
+            // 缓存同步失败不应阻断数据库事务，记录日志即可
+            log.error("缓存失效广播发送失败，Key: {}", key, e);
+        }
+
         return Result.ok();
     }
 
