@@ -5,6 +5,9 @@ import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.alibaba.csp.sentinel.slots.block.BlockException;
+import com.alibaba.csp.sentinel.slots.block.degrade.DegradeException;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
@@ -61,7 +64,20 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     private RocketMQTemplate rocketMQTemplate;
 
     @Override
+    @SentinelResource(
+            value = "queryShopById",      // 资源名称，稍后在控制台根据这个名字设置规则
+            blockHandler = "handleFlow",   // 指定限流后跳到哪个方法
+            fallback = "handleFallback"     // 处理熔断或业务异常（逻辑变慢或报错）
+    )
     public Result queryById(Long id){
+        System.out.println(">>> 真正进入了方法，准备睡200ms...");
+        // 💡 重点：人为制造慢调用！
+        // 让所有请求都睡 200ms，这样就超过了你设置的 100ms 阈值
+        try {
+            Thread.sleep(200);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         //缓存穿透
 //        Shop shop = queryWithPassThrough(id);
         Shop shop = clientClient
@@ -83,6 +99,24 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         return Result.ok(shop);
 
+    }
+
+    // 2. 兜底处理方法（限流后自动触发）
+// 注意：参数列表必须和原方法一致，最后再多加一个 BlockException
+    public Result handleFlow(Long id, BlockException ex) {
+        // 这里做类型判断
+        if (ex instanceof DegradeException) {
+            System.out.println(">>> [Sentinel 真正触发了熔断] ID: " + id);
+        } else {
+            System.out.println(">>> [Sentinel 触发了普通限流] ID: " + id);
+        }
+        return Result.fail("服务器拥挤");
+    }
+
+    // 熔断后的处理（逻辑和 handleFlow 类似，但语义不同）
+    public Result handleFallback(Long id) {
+        System.out.println(">>> [Sentinel 触发熔断降级] ID: " + id);
+        return Result.fail("服务暂时不可用，请稍后再试");
     }
 
     private static final ExecutorService CACHE_REBUILD_EXECUTOR= Executors.newFixedThreadPool(10);
@@ -314,4 +348,6 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         //6.返回
         return Result.ok(shops);
     }
+
+
 }

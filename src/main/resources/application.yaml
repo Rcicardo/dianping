@@ -7,6 +7,12 @@
       retry-times-when-send-failed: 3  # 发送失败重试次数
       send-message-timeout: 3000      # 发送超时时间
   spring:
+    cloud:
+      sentinel:
+        # 💡 关键配置：关闭 context 收敛，让 Service 层的资源独立出来
+        web-context-unify: false
+        transport:
+          dashboard: localhost:8090
     application:
       name: hmdp
     datasource:
